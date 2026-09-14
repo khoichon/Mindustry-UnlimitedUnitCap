@@ -1,0 +1,144 @@
+// Build script for the "Unlimited Unit Cap" Mindustry mod.
+//
+// This follows the standard layout used by Mindustry Java mods: compile against the
+// Mindustry/Arc classes ("compileOnly", since they're provided by the game at runtime),
+// then bundle mod.hjson + compiled classes + assets into a jar Mindustry's Mods menu
+// can load.
+//
+// IMPORTANT - desktop vs. Android: `./gradlew jar` alone only produces a desktop-loadable
+// jar. Regular JVM class files are NOT something Android's ART runtime can load directly;
+// getting a mod jar that also works on Android requires an extra step that converts
+// ("dexes") the compiled classes via the Android SDK's `d8` tool, and packages that
+// alongside the normal classes in the same jar. That's what the `deploy` task below does,
+// following the same approach used by Mindustry's own official Java mod template. Use
+// `./gradlew jar` for quick desktop-only testing, and `./gradlew deploy` for the jar you
+// actually want to install on Android (it also works on desktop).
+
+apply plugin: 'java'
+
+// Match the compatibility level current Mindustry releases require. As of Mindustry v159,
+// the game itself raised its minimum Java bytecode target to 17 on desktop, and the
+// published Mindustry:core artifact's Gradle module metadata now declares it needs a
+// Java 17-compatible consumer - compiling this mod against Java 8 fails dependency
+// resolution outright (a variant-matching error, not a language-feature one). Since
+// Mindustry made this same jump for its own codebase, targeting 17 here does not add any
+// actual platform-compatibility risk; the `deploy` task below still produces Android-loadable
+// output by dexing this bytecode with `d8`, exactly as Mindustry's own template does.
+sourceCompatibility = JavaVersion.VERSION_17
+targetCompatibility = JavaVersion.VERSION_17
+
+// The Mindustry/Arc release tag to compile against. Anuken tags Arc with the same version
+// string as the matching Mindustry release, so this one value is used for both.
+//
+// IMPORTANT: Rules#disableUnitCap (the field this mod flips) was added to Mindustry after
+// v146 - an older tag will fail to compile with "cannot find symbol: disableUnitCap". v159.5
+// is a current stable release that has it. If a newer stable release is out by the time you
+// build this, bump this to that tag; if you specifically need to target an older Mindustry
+// install, first confirm that install's Rules class actually has disableUnitCap.
+def mindustryVersion = 'v159.5'
+
+// Root of a local Android SDK install, only needed for the `deploy`/`jarAndroid` tasks
+// below (an Android-loadable jar isn't possible without it - see README.md's "Building
+// for Android" section for how to install one).
+def sdkRoot = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+
+sourceSets{
+    main{
+        java.srcDirs = ['src']
+    }
+}
+
+repositories{
+    mavenCentral()
+    maven{ url 'https://www.jitpack.io' }
+    maven{ url 'https://jitpack.io' }
+}
+
+// JitPack quirk workaround: Mindustry:core's published POM pins its Arc submodule
+// dependencies (arc-core, flabel, freetype, g3d, fx, arcnet, ...) to an internal build
+// commit hash rather than to a release tag. JitPack frequently hasn't built that exact
+// hash, which fails the build with "Could not find com.github.Anuken.Arc:<module>:<hash>".
+// The fix is to force every Arc submodule to resolve against the same release tag as
+// Mindustry itself, which IS published and matches what that release actually shipped with.
+configurations.all{
+    resolutionStrategy.eachDependency{ details ->
+        if(details.requested.group == 'com.github.Anuken.Arc'){
+            details.useVersion(mindustryVersion)
+        }
+    }
+}
+
+dependencies{
+    compileOnly "com.github.Anuken.Arc:arc-core:$mindustryVersion"
+    compileOnly "com.github.Anuken.Mindustry:core:$mindustryVersion"
+}
+
+// Desktop-loadable jar: plain compiled classes + mod.hjson + assets. This alone is enough
+// to test on desktop, but Android cannot load it (see the file-level comment above).
+jar{
+    archiveFileName = "${project.name}Desktop.jar"
+
+    from{ configurations.runtimeClasspath.collect{ it.isDirectory() ? it : zipTree(it) } }
+    from('.'){
+        include 'mod.hjson'
+    }
+    from('assets'){
+        into '.'
+    }
+}
+
+// Dexes the desktop jar's classes with the Android SDK's `d8` tool, producing a second jar
+// containing Android-loadable (DEX) bytecode instead of plain JVM class files. Requires a
+// local Android SDK with at least one platform installed (for android.jar, used only to
+// resolve Android API references during dexing/desugaring - this mod doesn't call any
+// Android-specific APIs itself) and a build-tools version installed with `d8`/`d8.bat`
+// available on your PATH.
+task jarAndroid{
+    dependsOn jar
+    doLast{
+        if(!sdkRoot || !new File(sdkRoot).exists()){
+            throw new GradleException("No valid Android SDK found. Set the ANDROID_HOME " +
+                "(or ANDROID_SDK_ROOT) environment variable to your Android SDK directory. " +
+                "See README.md's \"Building for Android\" section.")
+        }
+
+        def platformRoot = new File("$sdkRoot/platforms/").listFiles()
+            ?.sort()?.reverse()?.find{ f -> new File(f, "android.jar").exists() }
+        if(!platformRoot){
+            throw new GradleException("No android.jar found under $sdkRoot/platforms/. " +
+                "Install an Android platform, e.g. via: sdkmanager \"platforms;android-30\"")
+        }
+
+        // d8 needs every class this mod's compiled classes reference on its classpath
+        // (Mindustry/Arc + android.jar itself) to dex and desugar correctly.
+        def classpathArgs = (configurations.compileClasspath.asList() +
+            configurations.runtimeClasspath.asList() +
+            [new File(platformRoot, "android.jar")])
+            .collect{ "--classpath \"${it.path}\"" }.join(' ')
+
+        def d8Command = System.properties['os.name'].toLowerCase().contains('win') ? 'd8.bat' : 'd8'
+
+        def process = "$d8Command $classpathArgs --min-api 21 " +
+            "--output ${project.name}Android.jar ${project.name}Desktop.jar"
+            .execute(null, new File("$buildDir/libs"))
+        process.waitForProcessOutput(System.out, System.err)
+        if(process.exitValue() != 0){
+            throw new GradleException("d8 failed (exit ${process.exitValue()}). Make sure " +
+                "a build-tools directory containing '$d8Command' is on your PATH.")
+        }
+    }
+}
+
+// The task to actually run: merges the desktop classes and the dexed Android classes into
+// one jar, which is what you install in Mindustry on either platform.
+task deploy(type: Jar){
+    dependsOn jarAndroid
+    archiveFileName = 'UnlimitedUnitCap.jar'
+
+    from{
+        [
+            zipTree("$buildDir/libs/${project.name}Desktop.jar"),
+            zipTree("$buildDir/libs/${project.name}Android.jar")
+        ]
+    }
+}
