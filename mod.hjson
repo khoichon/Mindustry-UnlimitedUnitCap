@@ -8,8 +8,8 @@ reflection and instantiates it once, at which point its constructor runs
 {
   name: "unlimited-unit-cap"
   displayName: "Unlimited Unit Cap"
-  author: "YourName"
-  description: "Adds a toggle, accessible from the pause menu, that lets you disable the unit cap on a per-map basis. Your choice is remembered separately for every map and restored automatically the next time you play it."
+  author: "khoichon"
+  description: "Adds a toggle, shown in the top-left corner of the screen while playing, that lets you disable the unit cap on a per-map basis. Your choice is remembered separately for every map and restored automatically the next time you play it. Host-only: connecting clients don't need this mod installed."
   version: "1.0"
   main: "unlimitedunitcap.UnlimitedUnitCapMod"
 
@@ -21,5 +21,14 @@ reflection and instantiates it once, at which point its constructor runs
   // bundled build.gradle compiles against v159.5.
   minGameVersion: "159"
 
-  hidden: false
+  // Whether Mindustry treats this mod as "essential for multiplayer" - i.e. required on
+  // both the server/host and every connecting client, with a mismatch blocking or warning
+  // on join. Per Mindustry's own modding docs, this should be false ("hidden") for any mod
+  // that doesn't add new Content (blocks/items/units/etc.), since there's nothing that
+  // needs to stay in sync between host and client for content-ID purposes. This mod only
+  // flips an existing Rules field and shows a local HUD toggle - it adds no Content - so
+  // it's set to true here specifically so this is a HOST-ONLY mod: only whoever is hosting
+  // needs it installed, and connecting clients (or joining a server that has it) don't need
+  // a copy of their own to play normally.
+  hidden: true
 }

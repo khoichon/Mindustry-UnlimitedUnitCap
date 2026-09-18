@@ -10,6 +10,10 @@ automatically the next time you load that map.
 This is not a map-editor feature and does not require the map's creator to configure
 anything. It's purely a client-side convenience toggle for whoever is playing.
 
+**Host-only:** this mod only needs to be installed by whoever is hosting a game. People
+joining a hosted server or lobby don't need it themselves — see "Multiplayer" below for
+why.
+
 ## How it works
 
 The mod does not implement its own unit-cap system. It only flips Mindustry's existing
@@ -85,13 +89,20 @@ time, and the game is never crashed over it.
 
 ### Multiplayer
 
-`Rules` are part of the shared game state that whichever machine is simulating the world
-(the host) uses. This mod intentionally just flips that one real rule rather than
-inventing a separate per-player bypass. In a networked game, the value that actually
-governs spawning/building limits is the one on the host; a non-host client toggling this
-updates their own local rules object (and its UI), but only the host's copy is
-authoritative for gameplay. If you want the cap disabled for everyone in a hosted match,
-toggle it as the host.
+**Host-only mod:** `mod.hjson` sets `hidden: true`. Per Mindustry's own modding docs, this
+marks a mod as not "essential for multiplayer" — appropriate here since this mod adds no
+new Content (blocks/items/units), so there's nothing that needs to match between host and
+client for ID-sync purposes. In practice this means only whoever is **hosting** needs this
+mod installed; people joining their game don't need a copy of it themselves.
+
+This also lines up with how the toggle actually behaves: `Rules` are part of the shared
+game state that whichever machine is simulating the world (the host) uses. This mod
+intentionally just flips that one real rule rather than inventing a separate per-player
+bypass. The value that actually governs spawning/building limits in a networked game is
+the one on the host; a client with this mod installed toggling it themselves would only
+update their own local rules object (and its UI), not the actual enforced cap, since they
+aren't the one simulating the world. So the toggle is really only meaningful for whoever
+is hosting anyway — which is exactly who's expected to have the mod.
 
 ### Defaults & edge cases
 
@@ -183,6 +194,13 @@ This is the file to actually install — on both desktop and Android.
 If you don't want to set up an Android SDK locally, push this project to a GitHub
 repository — `.github/workflows/build.yml` builds it for you on every push (and can also
 be triggered manually via the **Actions** tab → **Build mod** → **Run workflow**).
+
+**Repo layout matters:** `build.gradle`/`settings.gradle` are meant to sit at the
+repository root (or at least somewhere the workflow can find them — see below). If you
+unzip this project and commit the whole `UnlimitedUnitCap/` folder as a subdirectory of
+your repo, rather than putting its *contents* at the repo root, that's fine too — the
+workflow's first step searches a few levels deep for `settings.gradle` and runs Gradle
+wherever it actually finds it, rather than assuming the root.
 
 It runs `gradle deploy` on a GitHub-hosted runner (which already has an Android SDK
 available), then uploads the result as a workflow artifact:
